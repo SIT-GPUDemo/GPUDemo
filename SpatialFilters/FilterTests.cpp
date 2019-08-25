@@ -39,7 +39,7 @@ int main(int argc, char** argv)
 	if (inputImage.empty() == true)
 	{
 		std::cerr << "Image load failed.  Check image file name and path." << std::endl;
-		std::this_thread::sleep_for(std::chrono::microseconds(2000));
+		std::this_thread::sleep_for(std::chrono::microseconds(2000000));
 		return 0;
 	}
 
@@ -112,7 +112,7 @@ int main(int argc, char** argv)
 	//2.  using shared memory access-------------------------------------------------------------------------
 	//  First call is to complete allocation/loading of kernel
 	//  Then call is executed 10 times with the timer for all 10 calls to average out individual scheduling delays
-	status = pGPU->Execute(KERNEL_FUNCTION_ID::KERNEL_FILTER_5x5, devImageBuffer, devKernelLoG5x5, devOutputBuffer2, fScale, 32, 16, w, h, true);
+	status = pGPU->Execute(KERNEL_FUNCTION_ID::KERNEL_FILTER_5x5, devImageBuffer, devKernelLoG5x5, devOutputBuffer2, fScale, 128, 8, w, h, true);
 	if (bUseTimer == true)
 	{
 		pGPU->ResetTimer();
@@ -121,7 +121,7 @@ int main(int argc, char** argv)
 	fExecutionTime = 0.0f;
 	for (size_t iteration = 0; iteration < 10; iteration++)
 	{
-		status = pGPU->Execute(KERNEL_FUNCTION_ID::KERNEL_FILTER_5x5, devImageBuffer, devKernelLoG5x5, devOutputBuffer2, fScale, 32, 16, w, h, true);
+		status = pGPU->Execute(KERNEL_FUNCTION_ID::KERNEL_FILTER_5x5, devImageBuffer, devKernelLoG5x5, devOutputBuffer2, fScale, 128, 8, w, h, true);
 	}
 	if (bUseTimer == true)
 	{

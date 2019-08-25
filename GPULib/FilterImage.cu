@@ -6,10 +6,8 @@
 #define CONVOLUTION_KERNEL_SIZE_7   7
 #define CONVOLUTION_KERNEL_SIZE_9   9
 
-#define BLOCK_SIZE_X_1 32
-#define BLOCK_SIZE_Y_1 32
-#define BLOCK_SIZE_X_2 64
-#define BLOCK_SIZE_Y_2 64
+#define BLOCK_SIZE_X 256
+#define BLOCK_SIZE_Y 16
 
 extern struct KERNEL_PARAMS* params;
 
@@ -25,9 +23,9 @@ __global__ void s_filterImage_5x5(float* imageIn, float* kernel, float* imageOut
 		return;
 	}
 
-	__shared__ float inBuffer[BLOCK_SIZE_X_2 * BLOCK_SIZE_Y_2];
-	__shared__ float outBuffer[BLOCK_SIZE_X_2* BLOCK_SIZE_Y_2];
-	__shared__ float s_kernel[(CONVOLUTION_KERNEL_SIZE_5)*(CONVOLUTION_KERNEL_SIZE_5)];
+	__shared__ float inBuffer[BLOCK_SIZE_X * BLOCK_SIZE_Y + 2 * CONVOLUTION_KERNEL_SIZE_5 + CONVOLUTION_KERNEL_SIZE_5 * CONVOLUTION_KERNEL_SIZE_5];
+	__shared__ float outBuffer[BLOCK_SIZE_X* BLOCK_SIZE_Y + 2 * CONVOLUTION_KERNEL_SIZE_5 + CONVOLUTION_KERNEL_SIZE_5 * CONVOLUTION_KERNEL_SIZE_5];
+	__shared__ float s_kernel[CONVOLUTION_KERNEL_SIZE_5*CONVOLUTION_KERNEL_SIZE_5];
 
 	//check that the thread is within the region of the image
 	if (c >= imW || r >= imH)
@@ -39,14 +37,14 @@ __global__ void s_filterImage_5x5(float* imageIn, float* kernel, float* imageOut
 	//mask to the shared buffer
 	if (threadIdx.x < CONVOLUTION_KERNEL_SIZE_5 && threadIdx.y < CONVOLUTION_KERNEL_SIZE_5)
 	{
-		s_kernel[threadIdx.y*CONVOLUTION_KERNEL_SIZE_5 + threadIdx.y] = kernel[threadIdx.y*CONVOLUTION_KERNEL_SIZE_5 + threadIdx.x];
+		s_kernel[threadIdx.y*CONVOLUTION_KERNEL_SIZE_5 + threadIdx.x] = kernel[threadIdx.y*CONVOLUTION_KERNEL_SIZE_5 + threadIdx.x];
 	}
 
 	//fetch the data into the shared memory
 	//Contiguous threads fetch data from contiguous addresses in global memory (bufferIndex varies by 1 between 
 	//contiguous threads) so coalescing
 	//First 2 feteches: block of image data copied to local memory; 2nd fetch is offset by the convolution kernel size 
-	inBuffer[threadIdx.y*BLOCK_SIZE_X_2 + threadIdx.x] = imageIn[bufferIndex];
+	inBuffer[threadIdx.y*BLOCK_SIZE_X + threadIdx.x] = imageIn[bufferIndex];
 
 	//Compute the convolution and write to the shared output buffer
 	if ((c < (CONVOLUTION_KERNEL_SIZE_5 / 2)) || 
@@ -54,11 +52,16 @@ __global__ void s_filterImage_5x5(float* imageIn, float* kernel, float* imageOut
 		(r < (CONVOLUTION_KERNEL_SIZE_5/2)) ||
 		(r > (imH-CONVOLUTION_KERNEL_SIZE_5/2)))
 	{
-		outBuffer[threadIdx.y*(BLOCK_SIZE_X_2 + CONVOLUTION_KERNEL_SIZE_5) + threadIdx.x] = inBuffer[threadIdx.y*(BLOCK_SIZE_X_2 + CONVOLUTION_KERNEL_SIZE_5) + threadIdx.x];
+		imageOut[bufferIndex] = imageIn[threadIdx.y*(BLOCK_SIZE_X + CONVOLUTION_KERNEL_SIZE_5)];
 	}
 	else
 	{
 		float partialSum = 0.0f;
+		inBuffer[threadIdx.y*(BLOCK_SIZE_X + CONVOLUTION_KERNEL_SIZE_5)] = imageIn[(blockIdx.y*blockDim.y + threadIdx.y-CONVOLUTION_KERNEL_SIZE_5/2)*imW + (blockIdx.x*blockDim.x + threadIdx.x-CONVOLUTION_KERNEL_SIZE_5/2)];
+		inBuffer[threadIdx.y*(BLOCK_SIZE_X + CONVOLUTION_KERNEL_SIZE_5) + CONVOLUTION_KERNEL_SIZE_5] = imageIn[(blockIdx.y*blockDim.y + threadIdx.y-CONVOLUTION_KERNEL_SIZE_5/2)*imW + (blockIdx.x*blockDim.x + threadIdx.x + CONVOLUTION_KERNEL_SIZE_5/2)];
+		inBuffer[(threadIdx.y + CONVOLUTION_KERNEL_SIZE_5)*(BLOCK_SIZE_X + CONVOLUTION_KERNEL_SIZE_5) + threadIdx.x] = imageIn[(blockIdx.y*blockDim.y + threadIdx.y+CONVOLUTION_KERNEL_SIZE_5/2)*imW + (blockIdx.x*blockDim.x + threadIdx.x-CONVOLUTION_KERNEL_SIZE_5/2)];
+		inBuffer[(threadIdx.y + CONVOLUTION_KERNEL_SIZE_5)*(BLOCK_SIZE_X + CONVOLUTION_KERNEL_SIZE_5) + threadIdx.x + (3*CONVOLUTION_KERNEL_SIZE_5/2)] = imageIn[(blockIdx.y*blockDim.y + threadIdx.y + CONVOLUTION_KERNEL_SIZE_5 / 2)*imW + (blockIdx.x*blockDim.x + threadIdx.x + CONVOLUTION_KERNEL_SIZE_5 / 2)];
+
 		//Loop unrolling candidate *************************************************
 		for (int row = 0; row < CONVOLUTION_KERNEL_SIZE_5; row++)
 		{
@@ -67,40 +70,18 @@ __global__ void s_filterImage_5x5(float* imageIn, float* kernel, float* imageOut
 				//Multiple accesses to the image buffer, by each thread
 				//However, by having stored in shared memory, MUCH faster since no 
 				//need for global access
-				partialSum += s_kernel[row*CONVOLUTION_KERNEL_SIZE_5 + col] * inBuffer[(threadIdx.y + row *BLOCK_SIZE_X_2) + threadIdx.x + col ];
+				float val = inBuffer[threadIdx.y*(BLOCK_SIZE_X + CONVOLUTION_KERNEL_SIZE_5) + row * (BLOCK_SIZE_X + CONVOLUTION_KERNEL_SIZE_5) + threadIdx.x + col];
+				float kVal = s_kernel[row*CONVOLUTION_KERNEL_SIZE_5 + col];
+				partialSum +=  kVal*val;
 			}
 		}
-		outBuffer[threadIdx.y*BLOCK_SIZE_X_2 + threadIdx.y] = partialSum * scaleFactor;
+		//outBuffer[pixIdx] = partialSum * scaleFactor;
+		imageOut[bufferIndex] = partialSum * scaleFactor;
 		// ****************************************************************************
 	}
-	imageOut[bufferIndex] = 128;// outBuffer[threadIdx.y*BLOCK_SIZE_X_2 + threadIdx.x];
-	//This is a test
+	//imageOut[bufferIndex] = outBuffer[pixIdx];
 
 }
-
-/*
-__global__ void s_filterImage_5x5(float* imageIn, float* kernel, float* imageOut, float scaleFactor, int imW, int imH)
-{
-
-	//Create a barrier to make sure that all the threads have finished fetching the data from global memory before
-	//computing the actual convolution
-	__syncthreads();
-
-
-//	else
-//	{
-
-
-//	}
-
-	//synch all the threads before the shared memory is transferred to global memory
-	__syncthreads();
-
-	//Write output in shared buffer to global
-	imageOut[r*imW + c] = outBuffer[threadIdx.y*(BLOCK_SIZE_X_2 + CONVOLUTION_KERNEL_SIZE_5) + threadIdx.y];
-
-	return;
-}*/
 
 
 __global__ void g_filterImage_5x5(float* imageIn, float* kernel, float* imageOut, float scaleFactor, int imW, int imH)
@@ -137,8 +118,7 @@ __global__ void g_filterImage_5x5(float* imageIn, float* kernel, float* imageOut
 		imageOut[r*imW + c] = cumulativeSum*scaleFactor;
 	}
 
-	//synch all the threads before the shared memory is transferred to global memory
-	__syncthreads();
+
 
 	return;
 }
