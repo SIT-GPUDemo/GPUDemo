@@ -20,8 +20,34 @@
 #include"kernelConvolutions.h"
 
 #define INPUT_DEMO_FILE "RoadLarge.bmp"
-#define OUTPUT_DEMO_FILE "RoadLargeWithFilter.png"
+
 #define OUTPUT_DEMO_SHARED_MEM_FILE "RoadLargeWithFilterOnSharedMemory.png"
+
+//Function prototypes----------------------------------------------------------
+int FilterOnGlobalMemory(IGPU* pGPU,
+	int devImageBuffer,
+	int devKernelLoG5x5,
+	int devOutputBuffer1,
+	float fScale,
+	int bW,
+	int bH,
+	int w,
+	int h,
+	bool bUseTimer);
+
+int FilterOnSharedMemory(IGPU* pGPU,
+	int devImageBuffer,
+	int devKernelLoG5x5,
+	int devOutputBuffer1,
+	float fScale,
+	int bW,
+	int bH,
+	int w,
+	int h,
+	bool bUseTimer);
+// ------------- END: Function prototypes ----------------------------------------------
+
+
 
 int main(int argc, char** argv)
 {
@@ -74,67 +100,33 @@ int main(int argc, char** argv)
 	int devKernelLoG5x5 = pGPU->AllocateMemory(5, 5, DATA_TYPE::FLOAT32, MEMORY_TYPE::MEMORY_DEVICE);
 	status = pGPU->WriteData((float_t*)kernelsConvolution::LoG5x5, devKernelLoG5x5, WRITE_PATH::WRITE_HOST_2_DEV);
 
+	//OpenCV cv::Mat structures for retrieving data
+	cv::Mat outImageF(static_cast<int>(h), static_cast<int>(w), CV_32FC1);
+	cv::Mat outImage(static_cast<int>(h), static_cast<int>(w), CV_8UC1);
+
 	//Execute: Laplacian of Gradient (5x5)
 	float fScale = 1.0f / 16.0f;
 
 	//1.  using global memory access-------------------------------------------------------------------------
 	//  First call is to complete allocation/loading of kernel
 	//  Then call is executed 10 times with the timer for all 10 calls to average out individual scheduling delays
-	status = pGPU->Execute(KERNEL_FUNCTION_ID::KERNEL_FILTER_5x5, devImageBuffer, devKernelLoG5x5, devOutputBuffer1, fScale, 32, 16, w, h, false);
-	if (bUseTimer == true)
-	{
-		pGPU->ResetTimer();
-	}
-
-	float fExecutionTime = 0.0f;
-	for (size_t iteration = 0; iteration < 10; iteration++)
-	{
-		status = pGPU->Execute(KERNEL_FUNCTION_ID::KERNEL_FILTER_5x5, devImageBuffer, devKernelLoG5x5, devOutputBuffer1, fScale, 32, 16, w, h);
-	}
-	if (bUseTimer == true)
-	{
-		float executionTime = pGPU->GetExecutionTime();
-		pGPU->ResetTimer();
-		std::cout << "Kernel execution time: " << executionTime / 10.0f << std::endl;
-	}
-	//
-	//Retrieve data
-	cv::Mat outImageF(static_cast<int>(h), static_cast<int>(w), CV_32FC1);
-	cv::Mat outImage(static_cast<int>(h), static_cast<int>(w), CV_8UC1);
-
-
-	status = pGPU->WriteData((float_t*)outImageF.data, devOutputBuffer1, WRITE_PATH::WRITE_DEV_2_HOST);
-	outImageF.convertTo(outImage, CV_8UC1, 1.0, 0.0);
-
-	cv::imwrite(std::string(OUTPUT_DEMO_FILE), outImage);
+	status = FilterOnGlobalMemory(pGPU, devImageBuffer, devKernelLoG5x5, devOutputBuffer1, fScale, 32, 16, w, h, true);
 
 
 	//2.  using shared memory access-------------------------------------------------------------------------
 	//  First call is to complete allocation/loading of kernel
 	//  Then call is executed 10 times with the timer for all 10 calls to average out individual scheduling delays
-	status = pGPU->Execute(KERNEL_FUNCTION_ID::KERNEL_FILTER_5x5, devImageBuffer, devKernelLoG5x5, devOutputBuffer2, fScale, 128, 8, w, h, true);
-	if (bUseTimer == true)
-	{
-		pGPU->ResetTimer();
-	}
+	status = FilterOnSharedMemory(pGPU, devImageBuffer, devKernelLoG5x5, devOutputBuffer2, fScale, 128, 8, w, h, true);
 
-	fExecutionTime = 0.0f;
-	for (size_t iteration = 0; iteration < 10; iteration++)
-	{
-		status = pGPU->Execute(KERNEL_FUNCTION_ID::KERNEL_FILTER_5x5, devImageBuffer, devKernelLoG5x5, devOutputBuffer2, fScale, 128, 8, w, h, true);
-	}
-	if (bUseTimer == true)
-	{
-		float executionTime = pGPU->GetExecutionTime();
-		pGPU->ResetTimer();
-		std::cout << "Kernel execution time: " << executionTime / 10.0f << std::endl;
-	}
-	//
-	//Retrieve data
-	status = pGPU->WriteData((float_t*)outImageF.data, devOutputBuffer2, WRITE_PATH::WRITE_DEV_2_HOST);
-	outImageF.convertTo(outImage, CV_8UC1, 1.0, 0.0);
 
-	cv::imwrite(std::string(OUTPUT_DEMO_SHARED_MEM_FILE), outImage);
+	// Release resources
+	pGPU->FreeMemory(devImageBuffer);
+	pGPU->FreeMemory(devKernelLoG5x5);
+	pGPU->FreeMemory(devOutputBuffer1);
+	pGPU->FreeMemory(devOutputBuffer2);
+	pGPU->FreeMemory(devImageBufferHostLocked);
+	pGPU->FreeMemory(devImageBufferManaged);
+	pGPU->FreeMemory(devImageBufferAligned);
 
 	return 0;
 }
