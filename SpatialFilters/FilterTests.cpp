@@ -21,7 +21,6 @@
 
 #define INPUT_DEMO_FILE "RoadLarge.bmp"
 
-#define OUTPUT_DEMO_SHARED_MEM_FILE "RoadLargeWithFilterOnSharedMemory.png"
 
 //Function prototypes----------------------------------------------------------
 int FilterOnGlobalMemory(IGPU* pGPU,
@@ -127,6 +126,8 @@ int main(int argc, char** argv)
 	pGPU->FreeMemory(devImageBufferHostLocked);
 	pGPU->FreeMemory(devImageBufferManaged);
 	pGPU->FreeMemory(devImageBufferAligned);
+
+	std::this_thread::sleep_for(std::chrono::seconds(5));
 
 	return 0;
 }
